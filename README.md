@@ -127,3 +127,54 @@ change 最可能影响 `ctx.llm` / `ctx.agents` 调用面；逻辑集中在 `src
 ### 0.1.0
 
 首个可用版本。
+
+## 多 agent 协作（0.2.0）
+
+核心原语：**后台作业 + 并发池**。调用方 agent（ZCode / Claude Code）是编排者，
+bridge 只负责并发上限与作业状态。
+
+| 工具 | 说明 |
+|---|---|
+| `dsh_agent_start` | 后台委派：立刻返回 `jobId`，agent 在后台跑（最多 `agentMaxConcurrent` 个同时，多余排队） |
+| `dsh_agent_status` | 查单个作业：`queued → running → done / error / cancelled`，done 时带最终答案 |
+| `dsh_agent_list` | 列出全部作业（新→旧），label 为任务前缀 |
+| `dsh_agent_cancel` | 取消排队/运行中的作业（运行中的会收到 abort 信号） |
+
+典型编排（以扇出评审为例）：
+
+```text
+1. dsh_agent_start ×3（三个不同视角的 review 任务，同一仓库不同侧重）
+2. 期间用 dsh_agent_list 看进度
+3. 全部 done 后逐个 dsh_agent_status 收割结果，由编排者汇总
+```
+
+配置新增：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `agentMaxConcurrent` | `3` | 同时最多几个一次性 agent 在跑 |
+| `jobTtlMs` | `3600000` | 已完成作业的保留时长（过后自动清理） |
+
+## 更新日志
+
+### 0.2.0
+
+- **多 agent 协作**：新增 `dsh_agent_start` / `dsh_agent_status` / `dsh_agent_list` /
+  `dsh_agent_cancel` 后台作业工具与并发池（`agentMaxConcurrent`，默认 3；
+  超出的任务 FIFO 排队）。阻塞式 `dsh_agent_run` 保留，适合快任务。
+- 新增 `src/jobs.ts` 通用作业管理器（并发信号量 / 状态机 / TTL 清理 / 可注入时钟）。
+- 测试：`test/jobs-test.mjs`（JobManager 语义 5 项 + MCP 端到端 4 项，含真实并发分布断言），
+  原协议/stdio 测试同步更新到 9 工具。
+
+### 0.1.1
+
+- 🔴 修正 cordis 注入声明：`inject` 从 `[]` 改为 `["llm", "agents"]` —— 此前 apply 后访问
+  `ctx.llm` / `ctx.agents` 抛 `cannot get property "llm" without inject`，所有工具返回
+  `BRIDGE_ERROR`（服务名来自官方包：dsh-agent 的 AgentRegistry 构造 `super(ctx, "agents")`）。
+- 未登录的 provider（如 `deepseek-official`）返回零产出流时，现在显式抛 `EMPTY_STREAM`
+  错误并提示在 dsh 界面登录，而不是静默返回空文本。
+- 兼容性实测：DSH `0.2.1-rc.5`（desktop profile）+ workbuddy-ai 全模型路由可用。
+
+### 0.1.0
+
+首个可用版本。

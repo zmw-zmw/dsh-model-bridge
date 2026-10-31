@@ -9,7 +9,7 @@
  *   a harness restart does not silently strand external agents' session ids.
  */
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -30,6 +30,7 @@ import { SessionId } from '@deepseek-ai/dsh-session';
 import type { SessionEvent } from '@deepseek-ai/dsh-session';
 
 import type { BridgeConfig } from './config.js';
+import { JobManager, type JobRecord } from './jobs.js';
 
 /** Minimal logger seam so the bridge is testable without a Cordis context. */
 export interface BridgeLogger {
@@ -46,6 +47,21 @@ export class BridgeError extends Error {
     ) {
         super(message);
     }
+}
+
+/**
+ * Extract the "known global tools" name list from a tools.restrict() error
+ * (`...unknown global tools "a", "b"; known global tools: c, d, e`).
+ * Returns null when the message does not carry the list.
+ */
+export function knownToolsFromRestrictError(message: string): Set<string> | null {
+    const match = message.match(/known global tools:\s*(.+)$/s);
+    if (!match) { return null; }
+    const names = match[1]
+        .split(',')
+        .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+        .filter(Boolean);
+    return names.length > 0 ? new Set(names) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -142,6 +158,8 @@ export interface ModelListRow {
 export class ModelBridge {
     private readonly sessions = new Map<string, ChatSession>();
     private readonly stateDir: string;
+    /** Background agent jobs (0.2.0 multi-agent collaboration). */
+    private readonly jobs: JobManager<AgentRunResult>;
 
     constructor(
         private readonly ctx: Context,
@@ -149,6 +167,10 @@ export class ModelBridge {
         private readonly log: BridgeLogger,
     ) {
         this.stateDir = cfg.stateDir || join(homedir(), '.dsh-model-bridge');
+        this.jobs = new JobManager<AgentRunResult>({
+            maxConcurrent: cfg.agentMaxConcurrent,
+            ttlMs: cfg.jobTtlMs,
+        });
     }
 
     // -- route resolution ---------------------------------------------------
@@ -321,11 +343,20 @@ export class ModelBridge {
         // session/event bus, exactly like the ACP bridge does.
         let text = '';
         let assistantMessages = 0;
+        // 0.2.0：记录最后一次 llm/retry 的失败原因 —— agent 重试耗尽仍拿不到模型响应时
+        // （典型：上游 429 限流），调用方该看到「为什么空」，而不是一句含糊的 no-final-message。
+        let lastLlmFailure = '';
         const onSessionEvent = (session: { id: string }, event: SessionEvent) => {
             if (session.id !== id) return;
-            if (event.type === 'assistant/message' && !event.data.interrupted) {
+            const eventType = String(event.type);
+            if (eventType === 'llm/retry') {
+                const failure = (event.data as { failure?: { message?: string } } | undefined)?.failure;
+                if (failure?.message) { lastLlmFailure = failure.message.slice(0, 200); }
+                return;
+            }
+            if (eventType === 'assistant/message' && !(event.data as { interrupted?: boolean } | undefined)?.interrupted) {
                 assistantMessages += 1;
-                for (const block of event.data.message.content) {
+                for (const block of (event.data as { message: { content: Array<{ type: string; text?: string }> } }).message.content) {
                     if (block.type === 'text') text += (text ? '\n\n' : '') + block.text;
                 }
             }
@@ -346,7 +377,34 @@ export class ModelBridge {
                 const restriction = this.cfg.agentAllowTools.length > 0
                     ? { allow: this.cfg.agentAllowTools }
                     : { deny: this.cfg.agentDenyTools };
-                agentCtx.tools.restrict(restriction);
+                try {
+                    agentCtx.tools.restrict(restriction);
+                } catch (error) {
+                    // 🔴 0.2.1 实测：harness 升级会重命名全局工具（rc.5 桌面端已无 bash/pwsh），
+                    //    restrict() 对未知名字整体抛错。从报错里取「known global tools」名单，
+                    //    与配置求交集后重试 —— 名单永远跟 harness 对齐，配置不用追着版本改。
+                    //    仍失败就中止本次委派（绝不裸跑一个没限权的 agent）。
+                    const known = knownToolsFromRestrictError(String((error as Error)?.message ?? ''));
+                    if (!known) { throw error; }
+                    if (this.cfg.agentAllowTools.length > 0) {
+                        const allow = this.cfg.agentAllowTools.filter((t) => known.has(t));
+                        this.log.warn(`agent tool allow-list narrowed to harness-known tools (allow[${allow.length}])`);
+                        agentCtx.tools.restrict({ allow });
+                    } else {
+                        const deny = this.cfg.agentDenyTools.filter((t) => known.has(t));
+                        // 🔴 安全底线：deny 收窄后为空 = 没有任何已知工具可拒 = 无法保证只读姿态。
+                        //    宁可中止本次委派，也绝不静默放行一个未限权的 agent。
+                        if (deny.length === 0) {
+                            throw new BridgeError(
+                                '配置的 agentDenyTools 与 harness 已知工具无交集，无法施加只读限制；'
+                                + `harness 已知: ${[...known].join(', ')}。请更新 agentDenyTools 后重试`,
+                                'RESTRICT_IMPOSSIBLE',
+                            );
+                        }
+                        this.log.warn(`agent tool deny-list narrowed to harness-known tools (deny[${deny.length}])`);
+                        agentCtx.tools.restrict({ deny });
+                    }
+                }
             },
         });
 
@@ -381,7 +439,9 @@ export class ModelBridge {
                 sessionId: id,
                 provider,
                 model,
-                text: text || '(agent completed without a final assistant message)',
+                text: text || (lastLlmFailure
+                    ? `(agent 未能获得模型响应 —— 上游最后失败: ${lastLlmFailure}。稍后重试或更换 provider/model)`
+                    : '(agent completed without a final assistant message)'),
                 assistantMessages,
                 durationMs: Date.now() - started,
             };
@@ -394,6 +454,32 @@ export class ModelBridge {
             offEvent?.();
             await handle.dispose();
         }
+    }
+
+    // -- background agent jobs (0.2.0 multi-agent collaboration) ---------------
+
+    /**
+     * Submit an agent run to the background pool and return a jobId at once.
+     * The caller fans out N tasks, then polls `agentJobStatus` — that is the
+     * whole multi-agent collaboration primitive: the external agent stays the
+     * orchestrator, the bridge only caps concurrency (`agentMaxConcurrent`)
+     * and keeps per-job state.
+     */
+    agentStart(input: AgentRunInput): { jobId: string; queued: boolean } {
+        const { id: jobId, queued } = this.jobs.start(input.task, (signal) => this.agentRun({ ...input, signal }));
+        return { jobId, queued };
+    }
+
+    agentJobStatus(jobId: string): JobRecord<AgentRunResult> | null {
+        return this.jobs.status(jobId);
+    }
+
+    agentJobsList(): Array<JobRecord<AgentRunResult>> {
+        return this.jobs.list();
+    }
+
+    agentJobCancel(jobId: string): boolean {
+        return this.jobs.cancel(jobId);
     }
 
     // -- session management ----------------------------------------------------

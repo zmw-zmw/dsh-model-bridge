@@ -19,85 +19,9 @@ import { ModelBridge } from '../lib/bridge.js';
 import { startMcpHttpServer } from '../lib/mcp-server.js';
 
 // ---------------------------------------------------------------------------
-// Stub harness
+// Stub harness (shared with jobs-test.mjs)
 // ---------------------------------------------------------------------------
-
-const logged = [];
-
-function makeStream(text) {
-    return async function* stream(options) {
-        assert.equal(options.provider, 'deepseek-official');
-        yield { type: 'text-delta', index: 0, text };
-        yield { type: 'usage', index: 0, usage: { inputTokens: 3, outputTokens: 5, totalTokens: 8 } };
-        yield { type: 'finish', index: 0, reason: { kind: 'stop' } };
-    };
-}
-
-function makeStubCtx() {
-    let createdAgents = 0;
-    return {
-        llm: {
-            listProviders: () => [{ id: 'deepseek-official', name: 'DeepSeek' }, { id: 'workbuddy-ai', name: 'WorkBuddy AI' }],
-            listModels: async (provider) =>
-                provider === 'workbuddy-ai'
-                    ? [{ provider, id: 'deepseek-v4.1-flash', name: 'Deepseek-V4.1-Flash', inputModalities: ['text', 'image'] }]
-                    : [{ provider, id: 'deepseek-flash', name: 'DeepSeek-V4.1-Flash' }],
-            stream: (options) => {
-                const last = [...options.messages].pop();
-                const userText = last.content[0].text;
-                return makeStream(`echo:${userText}`)(options);
-            },
-        },
-        agents: {
-            create: async ({ sessionId, setup }) => {
-                createdAgents += 1;
-                let idleResolve;
-                const idle = new Promise((r) => (idleResolve = r));
-                const agent = {
-                    id: sessionId,
-                    followup: (msg) => {
-                        logged.push(`agent-task: ${msg.content[0].text}`);
-                        // Simulate the loop publishing an assistant message via session events.
-                        events.dispatch(sessionId, {
-                            type: 'assistant/message',
-                            data: { message: { content: [{ type: 'text', text: `done: ${msg.content[0].text}` }] } },
-                        });
-                        setTimeout(idleResolve, 5);
-                    },
-                    whenIdle: () => idle,
-                    cancel: () => {},
-                };
-                const disposers = [];
-                const agentCtx = {
-                    tools: { restrict: (r) => { logged.push(`restrict: ${JSON.stringify(r)}`); disposers.push(() => {}); } },
-                };
-                await setup(agentCtx);
-                return {
-                    agent,
-                    dispose: async () => {
-                        createdAgents -= 1;
-                    },
-                };
-            },
-        },
-        on: (event, listener) => {
-            const entry = { event, listener };
-            events.listeners.push(entry);
-            return () => {
-                events.listeners = events.listeners.filter((l) => l !== entry);
-            };
-        },
-        logger: { info: (m) => logged.push(m), warn: (m) => logged.push(m), error: (m) => logged.push(m) },
-        _createdAgents: () => createdAgents,
-    };
-}
-
-const events = {
-    listeners: [],
-    dispatch(sessionId, event) {
-        for (const l of this.listeners) l.listener({ id: sessionId }, event);
-    },
-};
+import { makeStubCtx, events, logged } from './protocol-stub-harness.mjs';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -149,13 +73,23 @@ async function test(name, fn) {
     }
 }
 
-await test('tools/list exposes the four bridge tools', async () => {
+await test('tools/list exposes the nine bridge tools', async () => {
     await withServer({}, async (port) => {
         const client = await connectClient(port);
         const { tools } = await client.listTools();
         assert.deepEqual(
             tools.map((t) => t.name).sort(),
-            ['dsh_agent_run', 'dsh_chat', 'dsh_model_list', 'dsh_session_close', 'dsh_session_list'],
+            [
+                'dsh_agent_cancel',
+                'dsh_agent_list',
+                'dsh_agent_run',
+                'dsh_agent_start',
+                'dsh_agent_status',
+                'dsh_chat',
+                'dsh_model_list',
+                'dsh_session_close',
+                'dsh_session_list',
+            ],
         );
         await client.close();
     });
@@ -257,7 +191,7 @@ await test('bearer token is enforced', async () => {
         );
         const good = await connectClient(port, 'sekrit');
         const { tools } = await good.listTools();
-        assert.equal(tools.length, 5);
+        assert.equal(tools.length, 9);
         await good.close();
     });
 });

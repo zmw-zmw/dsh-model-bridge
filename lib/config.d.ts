@@ -7,7 +7,7 @@
  */
 import z from '@deepseek-ai/schemastery';
 /** Tools the bridged one-shot agent may not use by default (write/execute). */
-export declare const DEFAULT_AGENT_DENY_TOOLS: readonly ["bash", "bash_persistent", "pwsh", "pwsh_persistent", "str_replace_editor", "write"];
+export declare const DEFAULT_AGENT_DENY_TOOLS: readonly ["bash", "bash_persistent", "pwsh", "pwsh_persistent", "str_replace_editor", "write", "shell", "shell_command", "run_command", "mcp__ssh__ssh_send", "mcp__ssh__ssh_open", "edit_file", "create_file"];
 export interface BridgeConfig {
     /** Bind address for the MCP Streamable HTTP endpoint. Keep loopback unless you know the risk. */
     host: string;
@@ -34,6 +34,10 @@ export interface BridgeConfig {
     agentDenyTools: string[];
     /** Wall-clock budget for one `dsh_agent_run` delegation in milliseconds. */
     agentTimeoutMs: number;
+    /** Max one-shot agents running at the same time; extras queue (0.2.0 multi-agent). */
+    agentMaxConcurrent: number;
+    /** Finished background-agent jobs are forgotten this many ms after completion. */
+    jobTtlMs: number;
     /**
      * Directory for bridge chat-session history (`.dsh-model-bridge` under the
      * harness home when empty).

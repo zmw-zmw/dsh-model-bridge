@@ -1,6 +1,7 @@
 import type { Context } from '@deepseek-ai/cordis';
 import type { TokenUsage } from '@deepseek-ai/dsh-llm';
 import type { BridgeConfig } from './config.js';
+import { type JobRecord } from './jobs.js';
 /** Minimal logger seam so the bridge is testable without a Cordis context. */
 export interface BridgeLogger {
     info(message: string): void;
@@ -14,6 +15,12 @@ export declare class BridgeError extends Error {
     /** Stable machine-readable code surfaced to MCP clients. */
     code: string);
 }
+/**
+ * Extract the "known global tools" name list from a tools.restrict() error
+ * (`...unknown global tools "a", "b"; known global tools: c, d, e`).
+ * Returns null when the message does not carry the list.
+ */
+export declare function knownToolsFromRestrictError(message: string): Set<string> | null;
 export declare const CHAT_ROLES: {
     readonly default: undefined;
     readonly reviewer: string;
@@ -75,6 +82,8 @@ export declare class ModelBridge {
     private readonly log;
     private readonly sessions;
     private readonly stateDir;
+    /** Background agent jobs (0.2.0 multi-agent collaboration). */
+    private readonly jobs;
     constructor(ctx: Context, cfg: BridgeConfig, log: BridgeLogger);
     /** Resolve a provider/model route, discovering the harness's provider when unset. */
     private resolveRoute;
@@ -86,6 +95,20 @@ export declare class ModelBridge {
     chat(input: ChatTurnInput): Promise<ChatTurnResult>;
     private getOrCreateSession;
     agentRun(input: AgentRunInput): Promise<AgentRunResult>;
+    /**
+     * Submit an agent run to the background pool and return a jobId at once.
+     * The caller fans out N tasks, then polls `agentJobStatus` — that is the
+     * whole multi-agent collaboration primitive: the external agent stays the
+     * orchestrator, the bridge only caps concurrency (`agentMaxConcurrent`)
+     * and keeps per-job state.
+     */
+    agentStart(input: AgentRunInput): {
+        jobId: string;
+        queued: boolean;
+    };
+    agentJobStatus(jobId: string): JobRecord<AgentRunResult> | null;
+    agentJobsList(): Array<JobRecord<AgentRunResult>>;
+    agentJobCancel(jobId: string): boolean;
     listSessions(): Array<{
         id: string;
         createdAt: number;

@@ -69,7 +69,17 @@ try {
     const { tools } = await client.listTools();
     assert.deepEqual(
         tools.map((t) => t.name).sort(),
-        ['dsh_agent_run', 'dsh_chat', 'dsh_model_list', 'dsh_session_close', 'dsh_session_list'],
+        [
+        'dsh_agent_cancel',
+        'dsh_agent_list',
+        'dsh_agent_run',
+        'dsh_agent_start',
+        'dsh_agent_status',
+        'dsh_chat',
+        'dsh_model_list',
+        'dsh_session_close',
+        'dsh_session_list',
+      ],
     );
     console.log('ok - stdio proxy lists upstream tools');
 
