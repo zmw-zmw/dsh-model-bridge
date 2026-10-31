@@ -1,7 +1,7 @@
 {
   "name": "dsh-model-bridge",
   "description": "DeepSeek Harness plugin: exposes dsh models and one-shot agents to any MCP client agent (ZCode, Claude Code, Cursor, ...)",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

@@ -62,6 +62,8 @@ export interface AgentRunResult {
     sessionId: string;
     provider: string;
     model: string;
+    /** 回退/降级说明(0.2.2)。 */
+    note?: string;
     text: string;
     /** Durable turns the agent completed (1 unless the driver split the work). */
     assistantMessages: number;
@@ -95,8 +97,10 @@ export declare class ModelBridge {
      */
     listModels(): Promise<ModelListRow[]>;
     chat(input: ChatTurnInput): Promise<ChatTurnResult>;
+    chatOnce(input: ChatTurnInput): Promise<ChatTurnResult>;
     private getOrCreateSession;
     agentRun(input: AgentRunInput): Promise<AgentRunResult>;
+    agentRunOnce(input: AgentRunInput): Promise<AgentRunResult>;
     /**
      * Submit an agent run to the background pool and return a jobId at once.
      * The caller fans out N tasks, then polls `agentJobStatus` — that is the

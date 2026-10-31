@@ -23,6 +23,8 @@ export interface JobRecord<R = unknown> {
         message: string;
         code: string;
     };
+    /** 提交时的静态元数据(如 provider/model),失败时也可见。 */
+    meta?: Record<string, string>;
     /** True when the caller asked for cancellation while the runner was still going. */
     cancelRequested?: boolean;
 }
@@ -46,7 +48,7 @@ export declare class JobManager<R> {
     private running;
     constructor(options: JobManagerOptions);
     /** Submit work. Returns immediately; the runner starts when a slot frees up. */
-    start(label: string, runner: (signal: AbortSignal) => Promise<R>): {
+    start(label: string, runner: (signal: AbortSignal) => Promise<R>, meta?: Record<string, string>): {
         id: string;
         queued: boolean;
     };

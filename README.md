@@ -117,6 +117,9 @@ node test/stdio-test.mjs      # stdio 代理端到端
 针对 dsh `0.2.1-rc.5`（developer preview，peerDependencies 已锁定）。dsh 上游 breaking
 change 最可能影响 `ctx.llm` / `ctx.agents` 调用面；逻辑集中在 `src/bridge.ts`，升级时只需对齐该文件。
 
+配置新增：`fallbackModels`（默认 `['hy3']`）—— 首选模型被上游 429 限流/空流时，
+同 provider 内自动回退重试一次（chat 与 agent 都生效），对调用方透明。
+
 ## 更新日志
 
 ### 0.1.1
@@ -160,6 +163,13 @@ bridge 只负责并发上限与作业状态。
 | `jobTtlMs` | `3600000` | 已完成作业的保留时长（过后自动清理） |
 
 ## 更新日志
+
+### 0.2.2
+
+- **429 感知回退路由**：首选模型空流/限流重试耗尽时，自动按 `fallbackModels`（默认
+  `["hy3"]`）回退重试一次 —— 实测 deepseek-v4.1-flash 上游长时间 429，回退后扇出全绿。
+  作业记录新增 provider/model 元数据（失败作业也可见）。
+- `note` 字段：chat 空流回退、推理模型预算耗尽都会显式说明，不再静默空文本。
 
 ### 0.2.0
 
