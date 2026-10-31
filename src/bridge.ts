@@ -139,8 +139,6 @@ export interface AgentRunResult {
     sessionId: string;
     provider: string;
     model: string;
-    /** 回退/降级说明(0.2.2)。 */
-    note?: string;
     text: string;
     /** Durable turns the agent completed (1 unless the driver split the work). */
     assistantMessages: number;
@@ -235,25 +233,6 @@ export class ModelBridge {
     // -- dsh_chat ------------------------------------------------------------
 
     async chat(input: ChatTurnInput): Promise<ChatTurnResult> {
-        // 0.2.2：EMPTY_STREAM（上游 429/凭据问题的典型症状）时按 fallbackModels
-        // 同 provider 回退重试一次。推理模型预算耗尽的「空 text」不是回退条件 ——
-        // 那种情况 usage>0 且答案在 reasoning 字段里。
-        try {
-            return await this.chatOnce(input);
-        } catch (error) {
-            if ((error as BridgeError).code !== 'EMPTY_STREAM') { throw error; }
-            const tried = this.resolveRoute(input.provider, input.model);
-            for (const fb of this.cfg.fallbackModels || []) {
-                if (fb === tried.model) { continue; }
-                this.log.warn(`chat: "${tried.model}" 空流(上游限流?),回退模型 "${fb}"`);
-                const retry = await this.chatOnce({ ...input, model: fb });
-                return { ...retry, note: `首选模型 "${tried.model}" 空流,已自动回退到 "${fb}"` };
-            }
-            throw error;
-        }
-    }
-
-    async chatOnce(input: ChatTurnInput): Promise<ChatTurnResult> {
         const { provider, model } = this.resolveRoute(input.provider, input.model);
         const session = this.getOrCreateSession(input.sessionId, provider, model);
 
@@ -362,23 +341,6 @@ export class ModelBridge {
     // -- dsh_agent_run ---------------------------------------------------------
 
     async agentRun(input: AgentRunInput): Promise<AgentRunResult> {
-        const first = await this.agentRunOnce(input);
-        // 0.2.2：agent 一次 assistant message 都没拿到(典型=上游 429 重试耗尽)时,
-        // 按 fallbackModels 回退重跑一次。拿到正文立刻返回,失败原因附在最终结果里。
-        if (first.assistantMessages > 0 || input.signal?.aborted) { return first; }
-        const tried = this.resolveRoute(input.provider, input.model);
-        for (const fb of this.cfg.fallbackModels || []) {
-            if (fb === tried.model) { continue; }
-            this.log.warn('agent: "' + tried.model + '" 无产出(' + first.text.slice(0, 60) + '),回退模型 "' + fb + '"');
-            const retry = await this.agentRunOnce({ ...input, model: fb });
-            if (retry.assistantMessages > 0) {
-                return { ...retry, note: '首选模型 "' + tried.model + '" 无产出,已自动回退到 "' + fb + '"' };
-            }
-        }
-        return first;
-    }
-
-    async agentRunOnce(input: AgentRunInput): Promise<AgentRunResult> {
         const { provider, model } = this.resolveRoute(input.provider, input.model);
         const id = randomUUID();
         const started = Date.now();
@@ -511,13 +473,7 @@ export class ModelBridge {
      * and keeps per-job state.
      */
     agentStart(input: AgentRunInput): { jobId: string; queued: boolean } {
-        // 先解析路由:失败作业的 status 也能看到 provider/model(0.2.2)
-        const route = this.resolveRoute(input.provider, input.model);
-        const { id: jobId, queued } = this.jobs.start(
-            input.task,
-            (signal) => this.agentRun({ ...input, provider: route.provider, model: route.model, signal }),
-            { provider: route.provider, model: route.model },
-        );
+        const { id: jobId, queued } = this.jobs.start(input.task, (signal) => this.agentRun({ ...input, signal }));
         return { jobId, queued };
     }
 

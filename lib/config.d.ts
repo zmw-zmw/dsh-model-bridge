@@ -39,11 +39,6 @@ export interface BridgeConfig {
     /** Finished background-agent jobs are forgotten this many ms after completion. */
     jobTtlMs: number;
     /**
-     * 429/空流时的自动回退模型（0.2.2）：首选模型被上游限流时，同 provider 内按序
-     * 各试一次这份名单。默认 ['hy3'] —— 免费推理模型，与 deepseek-flash 配额独立。
-     */
-    fallbackModels: string[];
-    /**
      * Directory for bridge chat-session history (`.dsh-model-bridge` under the
      * harness home when empty).
      */
