@@ -1,0 +1,8 @@
+# 放进你的用户层 cordis.patch.yml（或用 dsh web --patch 本文件试用）
+- insert:
+  - id: model-bridge
+    name: dsh-model-bridge
+    config:
+      port: 3091
+      defaultModel: deepseek-flash
+      # agentAllowTools: [read, glob, grep]   # 白名单优先于黑名单
