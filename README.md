@@ -108,6 +108,10 @@ node test/stdio-test.mjs      # stdio 代理端到端
 测试全部基于 stub harness，不消耗任何模型额度。真实 harness 的联调：
 启动 `dsh web --no-open` 后用任意 MCP client 连 `http://127.0.0.1:3091/mcp` 执行 tools/list 即可。
 
+🔴 **实机验证纪律：只允许调用明确标记 FREE 的模型**（`deepseek-v4.1-flash`、`hy3`），
+其他模型计费属性不明，一律不碰；调用次数压到最少，撞 429 限流就等待或标注
+「限流窗口，稍后验证」，**绝不换未知计费的模型绕过**。
+
 ## 兼容性
 
 针对 dsh `0.2.1-rc.5`（developer preview，peerDependencies 已锁定）。dsh 上游 breaking
