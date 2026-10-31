@@ -110,6 +110,10 @@ node test/stdio-test.mjs      # stdio 代理端到端
 
 ## 兼容性
 
+🔴 **推理模型注意**（实测 `hy3`）：其产出全部走 `reasoning` 字段（结果 JSON 里有），
+且 `max_tokens` **含思考预算** —— 设 600/2000 时正文可能为空、只有 reasoning。
+给足预算（≥4000）并检查 `reasoning`，别把空 text 误判成模型故障。
+
 针对 dsh `0.2.1-rc.5`（developer preview，peerDependencies 已锁定）。dsh 上游 breaking
 change 最可能影响 `ctx.llm` / `ctx.agents` 调用面；逻辑集中在 `src/bridge.ts`，升级时只需对齐该文件。
 

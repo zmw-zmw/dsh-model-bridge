@@ -43,6 +43,8 @@ export interface ChatTurnResult {
     sessionId: string;
     provider: string;
     model: string;
+    /** 仅在 text 为空而 reasoning 有内容时出现(推理模型预算耗尽的显式提示)。 */
+    note?: string;
     text: string;
     reasoning?: string;
     usage?: TokenUsage;
